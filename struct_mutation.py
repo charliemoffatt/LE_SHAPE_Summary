@@ -13,4 +13,7 @@ class base:
         self.j = 0 # integer, may be overwritten with the index of the base this one pairs to
         self.helix = 0 # integer, may be overwritten with the index of the double stranded region/ helix base is involved in
         self.stem = 0 # integer, may be overwritten with the index of the stem a base is found in, does not have to be paired!
-        self.cr = False # logical
+        self.cr = False # logical, indicates if a base is within a previously defined critical region
+        self.id = '' # string, indicates the identity of the base
+    def __repr__(self):
+        return(f"{self.gene}_{self.i}::{self.j}")

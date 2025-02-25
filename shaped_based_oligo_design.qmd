@@ -1,0 +1,174 @@
+---
+title: "shape_based_oligos"
+format: html
+editor: visual
+---
+
+```{r}
+#| echo: false
+library(tidyr)
+library(dplyr)
+library(seqinr)
+library(R4RNA)
+```
+
+Functions needed:
+
+```{r functions}
+#| echo: false
+#| ## from scramble-LE-MPRA.Rmd
+# mutates a DNA string such that none of the bases have their original identity
+mutate_dna <- function(string) {
+  new_seq <- c()
+  list_bases <- string |>
+    strsplit("") |> #make into a list of characters
+    unlist()
+  for (i in 1:length(list_bases)){ # switch statement to turn a base into any base that is not the orginal, more compact than many if statements
+    mutant_bases <- switch(EXPR = list_bases[i], # https://www.geeksforgeeks.org/switch-case-in-r/ example 2
+           "A" = c("T", "C", "G"),
+           "T" = c("A", "C", "G"),
+           "C" = c("T", "A", "G"),
+           "G" = c("T", "A", "C"))
+   new_seq[i] <- sample(mutant_bases, 1)
+  }
+  output <- paste(new_seq, collapse = "")
+  return(output)
+}
+
+
+
+# makes mutations based on predicted structures
+mutate_structure <- function(LEsequence, viennaDotBracket, LEname, n_times = 3) { ##! add n_times for loop outside everything else
+  # initialize lists to store seqs and names
+  seqs <- c()
+  names <- c()
+  # use R4RNA to convet the dot braket to a table of base pairs by index
+  basepairs <- viennaDotBracket %>% # data frame of pairs (i and j) by position
+    viennaToHelix(.)
+  basepairs_collapse <- basepairs %>% # start of each helix, arranged by index of the the "left" strand
+    collapseHelix(.) %>%
+    arrange(., i)
+  # numbering helices
+  helix_number <- 0
+  row_num <- 1
+  len_bp <- nrow(basepairs) #used to stop an error with while statement
+  for (x in 1:nrow(basepairs_collapse)) {
+    h_end <- basepairs_collapse$i[x] + basepairs_collapse$length[x] - 1 #calc helix end
+    helix_number <- helix_number + 1
+    while (basepairs$i[row_num] <=  h_end) { #while the position index is <= helix end index
+        basepairs$value[row_num] <- helix_number
+        row_num <- row_num + 1
+      if (row_num > len_bp){ #deals with an error when row_num > number of rows in the df
+        break
+      }
+    }
+  }
+  # left mutations (to the 'i' indices)
+  for (x in 1:helix_number) {
+    helix_x <- basepairs %>%
+      filter(value == x)
+    s <- min(helix_x$i) # start of helix
+    e <- max(helix_x$i) # end of helix
+    upstream <- str_sub(LEsequence, start = 1, end = s-1) #sequence upstream of window
+    downstream <- str_sub(LEsequence, start = e+1, end = 260) #sequence downstream of window
+    for (y in 1:n_times) {
+      mutated <- str_sub(LEsequence, start = s, end = e) %>%
+        mutate_dna()
+      seqs[length(seqs)+1] <- paste(upstream, mutated, downstream, sep = "") %>% #append sequence to list
+        paste("GCTTCGATATCCGCATGCTA", ., "CTCTTGCGGTCGCACTAGTG", sep = "") #add PCR handles
+      names[length(names)+1] <- LEname %>%
+        paste(., "_", as.character(s), ":", as.character(e), "_", as.character(y), #based on "n_times variable"
+              sep = "")
+    }
+  }
+  
+  # right mutations (to the 'j' indices)
+  for (x in 1:helix_number) {
+    helix_x <- basepairs %>%
+      filter(value == x)
+    s <- min(helix_x$j)
+    e <- max(helix_x$j)
+    upstream <- str_sub(LEsequence, start = 1, end = s-1) #sequence upstream of window
+    downstream <- str_sub(LEsequence, start = e+1, end = 260) #sequence downstream of window
+      for (y in 1:n_times) {
+        mutated <- str_sub(LEsequence, start = s, end = e) %>%
+          mutate_dna()
+        seqs[length(seqs)+1] <- paste(upstream, mutated, downstream, sep = "") %>% #append sequence to list
+          paste("GCTTCGATATCCGCATGCTA", ., "CTCTTGCGGTCGCACTAGTG", sep = "") #add PCR handles
+        names[length(names)+1] <- LEname %>%
+          paste(., "_", as.character(s), ":", as.character(e), "_", as.character(y), #based on "n_times variable"
+                sep = "")
+    }
+  }
+  # compensatory (to both)
+  for (x in 1:helix_number) {
+    helix_x <- basepairs %>%
+      filter(value == x)
+    s <- min(helix_x$i)
+    e <- max(helix_x$i)
+    s_j <- min(helix_x$j)
+    e_j <- max(helix_x$j)
+    upstream <- str_sub(LEsequence, start = 1, end = s-1) #sequence upstream of window
+    midstream <- str_sub(LEsequence, start = e+1, end = s_j-1) #sequence between helicies
+    downstream <- str_sub(LEsequence, start = e_j+1, end = 260)
+    for (y in 1:n_times) {
+      mutated <- str_sub(LEsequence, start = s, end = e) %>%
+        mutate_dna()
+      list_bases <- mutated %>%
+        strsplit(., "") %>% #make into a list of characters
+        unlist(.)
+      complement <- c()
+      for (i in 1:length(list_bases)){ #getting comlementry seq
+        complement[i] <- switch(EXPR = list_bases[i], 
+             "A" = "T",
+             "T" = "A",
+             "C" = "G",
+             "G" = "C")
+      }
+      rev_comp <- complement %>%
+        rev(.) %>%
+        paste(., collapse = "")
+      seqs[length(seqs)+1] <- paste(upstream, mutated, midstream, rev_comp, downstream, sep = "") %>% #append sequence to list # complement should be rev_comp?
+        paste("GCTTCGATATCCGCATGCTA", ., "CTCTTGCGGTCGCACTAGTG", sep = "") #add PCR handles
+      names[length(names)+1] <- LEname %>%
+        paste(., "_", as.character(s), ":", as.character(e),"::", 
+        as.character(s_j), ":", as.character(e_j), "_", as.character(y), #based on "n_times variable"
+              sep = "")
+    }
+  }
+  output <- cbind(names, seqs) %>%
+    as.data.frame(.)
+  return(output)
+}
+```
+
+```{r}
+t2 <- R2easyR::read.ct("LE_SHAPE_Summary_2/CT_files/Trak2_LE_structures.ct")
+#t2_t <- R2easyR::add.dot.bracket(t2)
+# throwing error: Warning: NAs introduced by coercionError in if (as.numeric(as.character(ctdata_frame$BP[i])) > as.numeric(as.character(ctdata_frame$N[i]))) { : missing value where TRUE/FALSE needed, so just using https://rna.urmc.rochester.edu/RNAstructureWeb/Servers/ct2dot/ct2dot.html
+t2sq <- "GCUUCGAUAUCCGCAUGCUAAACCACUAACUGACCUCGUGUAUAAAUUAGCACAUGAAGGAGAGAGAUGCACUGAGAGUGGAGACCGGCCUAACUUGAGAGAAAAGGGAUGUUGCAGAAGGACUGUGAAUGUGGAGAGAGCGCAGUGAAGGGAUAGGACGUUUGUUUGCAAGAGGGUCUUUGAGGAUGGAGUCUAGUAAACAAAGUGGGGACAAGUGAUGACCAGUUUGGAGACAAAUGGAAGAAAGGGUUAGUUUGCUCCUUCAGCUACGUUUCCUUGCCUCUUGCGGUCGCACUAGUG"
+
+t2db <- ".........(((...(((....(((((..((..((((((((..........))))).)))..))............))))).(((...(((.............)))...))))))...)))...............((.(((((.((..((..(((((((((((((.((((..((((............((((..............)))).......))))..)))).)))))))))((((...((((......)))))))).........))))..))))))))).))........."
+
+t2df <- t2db |>
+  viennaToHelix() # i have no idea how helix represents dot bracket, lots of missing base pairs :/
+```
+
+Parsing Dot Bracket into a more useful format for me
+- i,j pairing
+- i = 1-300
+- j = i or 0, if unpaired
+
+. ->  j = 0 
+
+sub table:
+bracket type, index
+(, 10
+(, 11
+(, 12
+), 15
+), 16
+
+-> look at https://stackoverflow.com/questions/29991917/indices-of-matching-parentheses-in-python
+https://stackoverflow.com/questions/61961836/find-and-label-matching-pairs-of-parentheses
+

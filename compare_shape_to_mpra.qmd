@@ -1,0 +1,111 @@
+---
+title: "shape_vs_mpra"
+format: html
+editor: visual
+---
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+library(zoo)
+library(patchwork)
+k <- 5
+colors_span <- colorRampPalette(c("#AA3377", "#EE7744", "#0077BB"))(5) 
+```
+
+read in SHAPE base pairing probabilites, oligo enrichments and per span per base enrichment for all MPRAs
+```{r read-in-data, echo=FALSE}
+mutation_oligo <- read.csv("/Users/christophermoffatt/Desktop/lab/shuffle-mutation-mpra/mutation_MPRA_gfp_fc.csv") |>
+  filter(which_mpra == "exp")
+mutation_pos <- read_tsv("/Users/christophermoffatt/Desktop/lab/shuffle-mutation-mpra/l2fc_by_mutation_window.tsv", show_col_types = FALSE)|>
+  select(!`...12`) |>
+  mutate(mpra = "mutation")
+
+shuffle_oligo <- read.csv("/Users/christophermoffatt/Desktop/lab/shuffle-mutation-mpra/gfp_norm_shuffle_fc.csv")
+shuffle_pos <- read_tsv("/Users/christophermoffatt/Desktop/lab/shuffle-mutation-mpra/l2fc_by_shuffle_window.tsv", show_col_types = FALSE)|>
+  select(!`...6`) |>
+  mutate(mpra = "shuffle") |>
+  rename(log2fc = "enrichment")
+
+deletion_oligo <- read.csv("/Users/christophermoffatt/Desktop/lab/peak-oligo/gfp_l2fc_less_count.txt")
+deletion_pos <- read_tsv("/Users/christophermoffatt/Desktop/lab/peak-oligo/excluding_base_enrichment_less_count.txt", show_col_types = FALSE) |>
+  select(!`...5`) |>
+  mutate(mpra = "deletion") |>
+  rename(log2fc = "enrichment")
+
+shape_net1 <- read_tsv("/Users/christophermoffatt/Desktop/lab/LE_SHAPE_Summary/LE_SHAPE_Summary_2/Pairing_Probabilities/Net1_LE_prob.dp", skip = 1, show_col_types = FALSE) |> # first line is just `300`, which throws off the parsing, so just skip
+  mutate(gene = "net1")
+shape_net1_stats <- read_csv("/Users/christophermoffatt/Desktop/lab/LE_SHAPE_Summary/LE_SHAPE_Summary_2/Zscore_analysis/Net1_Sig_Diffs.csv")
+
+shape_trak2 <- read_tsv("/Users/christophermoffatt/Desktop/lab/LE_SHAPE_Summary/LE_SHAPE_Summary_2/Pairing_Probabilities/Trak2_LE_prob.dp", skip = 1, show_col_types = FALSE) |>
+  mutate(gene = "trak2")
+shape_trak2_stats <- read_csv("/Users/christophermoffatt/Desktop/lab/LE_SHAPE_Summary/LE_SHAPE_Summary_2/Zscore_analysis/Trak2_Sig_Diffs.csv")
+
+shape_trp53 <- read_tsv("/Users/christophermoffatt/Desktop/lab/LE_SHAPE_Summary/LE_SHAPE_Summary_2/Pairing_Probabilities/trp53inp2_LE_prob.dp", skip = 1, show_col_types = FALSE) |>
+  mutate(gene = "trp53")
+
+shape_trp53_stats <- read_csv("/Users/christophermoffatt/Desktop/lab/LE_SHAPE_Summary/LE_SHAPE_Summary_2/Zscore_analysis/trp53inp2_Sig_Diffs.csv")
+
+
+all_shape <- rbind(shape_net1, shape_trak2, shape_trp53)
+```
+
+```{r, net1-loc}
+mutation_pos_roll <- mutation_pos |>
+  group_by(position, gene, span) |>
+  summarise(n = n(), avg = mean(log2fc), se = sd(log2fc)/sqrt(n())) |>
+  group_by(gene, span) |>
+  arrange(position) |>
+  mutate(roll_avg = rollmean(avg, k = k, fill = NA),
+         roll_se = rollapplyr(avg, k, sd, fill = NA) / sqrt(k))
+
+p1 <- mutation_pos_roll |>
+  filter(gene == "net1", span %% 5 == 0) |>
+ggplot(aes(x = position, group = span)) +
+  geom_line(aes(y = roll_avg, color = span)) +
+  theme_classic()
+```
+
+```{r, net1-loc-vs-shape}
+t_shape_net1 <- shape_net1 |>
+  mutate(chr_i = as.character(i)) |>
+  group_by(i) |>
+  summarize(mean_prob = mean(`-log10(Probability)`))
+
+t_shape_net1 |>
+  ggplot(aes(x = i, y = mean_prob)) +
+  geom_point() +
+  theme_classic()
+
+t_shape_net1 |>
+  ungroup() |>
+  ggplot(aes(x = i, y = mean_prob)) +
+  geom_line() +
+  theme_classic()
+```
+
+```{r}
+mean_bp_prob <- all_shape |>
+  group_by(gene, i) |>
+  summarise(mean_pob_log10 = mean(`-log10(Probability)`)) |> # avg of a given nt pairing with any other nt
+  rename("position" = i)
+
+pair_mpra <- bind_rows(deletion_pos, mutation_pos, shuffle_pos) |>
+  select(gene:mpra) |>
+  left_join(mean_bp_prob, by = c("gene", "position"))
+
+# heat map/ strip under lines
+# dot bracket structure
+```
+
+
+```{r}
+p2 <- t_shape_net1 |>
+  ggplot(aes(x = i, y = 1, fill = mean_prob)) +
+  geom_tile() +
+  theme_void()
+
+p1/p2
+```
+

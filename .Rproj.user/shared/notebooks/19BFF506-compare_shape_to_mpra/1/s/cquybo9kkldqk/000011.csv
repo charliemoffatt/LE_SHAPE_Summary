@@ -1,0 +1,6 @@
+"0",""
+"0","t_shape_net1 |>"
+"0","  ungroup() |>"
+"0","  ggplot(aes(x = i, y = mean_prob)) +"
+"0","  geom_line() +"
+"0","  theme_classic()"

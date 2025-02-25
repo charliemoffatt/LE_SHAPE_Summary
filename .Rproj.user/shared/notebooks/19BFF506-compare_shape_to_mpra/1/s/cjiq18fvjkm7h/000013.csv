@@ -1,0 +1,8 @@
+"0","pair_mpra <- bind_rows(deletion_pos, mutation_pos, shuffle_pos) |>
+  select(gene:mpra) |>
+  left_join(mean_bp_prob, by = (""gene"", ""position""))
+"
+"2","Error: unexpected ',' in:
+""  select(gene:mpra) |>
+  left_join(mean_bp_prob, by = (""gene"",""
+"

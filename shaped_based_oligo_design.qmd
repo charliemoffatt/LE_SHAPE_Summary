@@ -8,6 +8,7 @@ editor: visual
 #| echo: false
 library(tidyr)
 library(dplyr)
+library(stringr)
 library(seqinr)
 library(R4RNA)
 ```
@@ -154,21 +155,44 @@ t2df <- t2db |>
   viennaToHelix() # i have no idea how helix represents dot bracket, lots of missing base pairs :/
 ```
 
-Parsing Dot Bracket into a more useful format for me
-- i,j pairing
-- i = 1-300
-- j = i or 0, if unpaired
+Parsing Dot Bracket into a more useful format for me - i,j pairing - i = 1-300 - j = i or 0, if unpaired
 
-. ->  j = 0 
+. -\> j = 0
 
-sub table:
-bracket type, index
-(, 10
-(, 11
-(, 12
-), 15
-), 16
+sub table: bracket type, index (, 10 (, 11 (, 12 ), 15 ), 16
 
--> look at https://stackoverflow.com/questions/29991917/indices-of-matching-parentheses-in-python
-https://stackoverflow.com/questions/61961836/find-and-label-matching-pairs-of-parentheses
+-\> look at https://stackoverflow.com/questions/29991917/indices-of-matching-parentheses-in-python https://stackoverflow.com/questions/61961836/find-and-label-matching-pairs-of-parentheses \# i, j dictionary -\> 2 contincous runs i and j = 1 ds, then sort into stems \# def stem as compeletewd set of brackets \# all combos of helixes wi a stem --\> calling what a helix is will be complex \# limit n helicies per stem, divide helices by length of interupting runs on each side, like if 1-2 on one side but 5 on other, keep defining as same helix
 
+```{r}
+db <- t2db |>
+  str_split("") |>
+  unlist()
+
+len <- 300
+df <- tibble(
+  i = 1:len,
+  j = NA,
+  value = NA
+)
+counter <- 1
+for (x in 1:len){ # for each index in a dot bracket representation
+  paired <- db[x] # value at index
+  if (paired == "."){
+    df$j[x] <- 0 # set j to 0; ie, not paired with anything
+  } else if (paired == "(") {
+    df$value[x] <- counter 
+    counter <- counter + 1 # increment counter
+  } else if (paired == ")") {
+    pair_bracket_index <- which.max(df$value) # index of highest value aka most recent opening bracket
+    df$j[x] <- df$i[pair_bracket_index] # assign index of most recent open bracket to j for this i (index x)
+    df$value[pair_bracket_index] <- 0 # set the value of the base just paired to i to 0 so it can't be assigned to another i
+  } else {
+    print("Error! Unexpected character in dot bracket notation")
+  }
+}
+
+# Next, need to back fill j for all open brackets; set as NA currently
+
+```
+
+? trim to 260 after mutating ect

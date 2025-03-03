@@ -161,38 +161,151 @@ Parsing Dot Bracket into a more useful format for me - i,j pairing - i = 1-300 -
 
 sub table: bracket type, index (, 10 (, 11 (, 12 ), 15 ), 16
 
--\> look at https://stackoverflow.com/questions/29991917/indices-of-matching-parentheses-in-python https://stackoverflow.com/questions/61961836/find-and-label-matching-pairs-of-parentheses \# i, j dictionary -\> 2 contincous runs i and j = 1 ds, then sort into stems \# def stem as compeletewd set of brackets \# all combos of helixes wi a stem --\> calling what a helix is will be complex \# limit n helicies per stem, divide helices by length of interupting runs on each side, like if 1-2 on one side but 5 on other, keep defining as same helix
+-\> look at https://stackoverflow.com/questions/29991917/indices-of-matching-parentheses-in-python https://stackoverflow.com/questions/61961836/find-and-label-matching-pairs-of-parentheses \# i, j dictionary -\> 2 contincous runs i and j = 1 ds, then sort into stems \# def stem as completed set of brackets \# all combos of helixes wi a stem --\> calling what a helix is will be complex \# limit n helicies per stem, divide helices by length of interupting runs on each side, like if 1-2 on one side but 5 on other, keep defining as same helix
 
 ```{r}
-db <- t2db |>
-  str_split("") |>
-  unlist()
+db_to_df <- function(dot_bracket_structure) {
+  db <- dot_bracket_structure |> # takes string of dots and brackets
+    str_split("") |>
+    unlist() # and turns into a vector of characters
+  
+  len <- length(db) # length of sequence represented by dot bracket
+  
+  df <- tibble( # initialize tibble to store each base (i) and what it pairs to (j)
+    i = 1:len,
+    j = NA,
+    value = NA) # temporary, used to track the order of open brackets and if they have been paired to their close bracket yet
+    
+    counter <- 1 # initialize counter, assigned to "value" when an open bracket is encountered
+   #====================== iteration through the dot bracket ==============
+     
+    for (idx in 1:len){ # for each index in a dot bracket representation
+      paired <- db[idx] # value at index
+      if (paired == "."){
+        df$j[idx] <- 0 # set j to 0; ie, not paired with anything
+      } else if (paired == "(") {
+        df$value[idx] <- counter 
+        counter <- counter + 1 # increment counter
+      } else if (paired == ")") {
+        pair_bracket_index <- which.max(df$value) # index of highest value aka most recent opening bracket
+        df$j[idx] <- df$i[pair_bracket_index] # assign index of most recent open bracket to j for this i (index x)
+        df$value[pair_bracket_index] <- 0 # set the value of the base just paired to i to 0 so it can't be assigned to another i
+      } else {
+        print("Error! Unexpected character in dot bracket notation")
+      }
+    }
+   #============== backfilling j values for indicies of open brackets =========
+    for (idx in 1:len){
+      val <- df$j[idx] 
+      if (is.na(val)) { # if the value in j at row idx is NA (indicate open bracket)
+       other_half <- which(df$j == idx) # index of row where idx = j
+       df$j[idx] <- other_half # assign index of matching close bracket to j
+      }
+    }
+    df_out <- df |>
+      select(!value) # drop value column since it doesn't mean anything biologically
+    return(df_out)
+}
 
-len <- 300
-df <- tibble(
-  i = 1:len,
-  j = NA,
-  value = NA
-)
-counter <- 1
-for (x in 1:len){ # for each index in a dot bracket representation
-  paired <- db[x] # value at index
-  if (paired == "."){
-    df$j[x] <- 0 # set j to 0; ie, not paired with anything
-  } else if (paired == "(") {
-    df$value[x] <- counter 
-    counter <- counter + 1 # increment counter
-  } else if (paired == ")") {
-    pair_bracket_index <- which.max(df$value) # index of highest value aka most recent opening bracket
-    df$j[x] <- df$i[pair_bracket_index] # assign index of most recent open bracket to j for this i (index x)
-    df$value[pair_bracket_index] <- 0 # set the value of the base just paired to i to 0 so it can't be assigned to another i
+db_to_df_one_to_one <- function(dot_bracket_structure) {
+  db <- dot_bracket_structure |> # takes string of dots and brackets
+    str_split("") |>
+    unlist() # and turns into a vector of characters
+  
+  len <- length(db) # length of sequence represented by dot bracket
+  
+  df <- tibble( # initialize tibble to store each base (i) and what it pairs to (j)
+    i = 1:len,
+    j = NA,
+    value = NA) # temporary, used to track the order of open brackets and if they have been paired to their close bracket yet
+    
+    counter <- 1 # initialize counter, assigned to "value" when an open bracket is encountered
+   #====================== iteration through the dot bracket ==============
+     
+    for (idx in 1:len){ # for each index in a dot bracket representation
+      paired <- db[idx] # value at index
+      if (paired == "."){
+        df$j[idx] <- 0 # set j to 0; ie, not paired with anything
+      } else if (paired == "(") {
+        df$value[idx] <- counter 
+        counter <- counter + 1 # increment counter
+      } else if (paired == ")") {
+        pair_bracket_index <- which.max(df$value) # index of highest value aka most recent opening bracket
+        df$j[idx] <- df$i[pair_bracket_index] # assign index of most recent open bracket to j for this i (index x)
+        df$value[pair_bracket_index] <- 0 # set the value of the base just paired to i to 0 so it can't be assigned to another i
+      } else {
+        print("Error! Unexpected character in dot bracket notation")
+      }
+    }
+    df_out <- df |>
+      select(!value) |># drop value column since it doesn't mean anything biologically
+      drop_na() # drop rows with j = NA, ie open bracket, to represent each bp only once in a df
+    return(df_out)
+}    
+```
+
+```{r}
+# https://stackoverflow.com/questions/16118050/how-to-check-if-a-vector-contains-n-consecutive-numbers
+# use diff() to find runs of numbers where the difference between them == 1
+# then find runs of at least 2, tolerating some number of runs between
+x <- db_to_df_one_to_one(t2db)
+
+xt <- x |>
+  mutate(runj = (c(0,diff(j))),  #need to pad with a zero to keep length
+         runi = (c(0,diff(i)))) # run columns show the difference between the value in the row (i N or j N) and that in the previous (i N-1 or j N-1)
+helixn <- 0
+xt <- xt |>
+  mutate(helix = NA)
+for (idx in 1:nrow(xt)){
+  if (xt$runj[idx] == 0 | xt$j[idx] == 0){ # if no difference between js
+    next # skip to the next row
+  } else if (xt$runi[idx] == 1) { # if a helix continues
+    xt$helix[idx] <- helixn
+  } else if (xt$runj[idx] > 0){ # if there is a positive differnce in js, ie, a helix starts
+    helixn <- helixn + 1 # increment helix number
+    xt$helix[idx] <- helixn 
+  } else if (xt$runj[idx] < -1) { # if helix ends
+    next 
   } else {
-    print("Error! Unexpected character in dot bracket notation")
+    xt$helix[idx] <- "Error"
   }
 }
 
-# Next, need to back fill j for all open brackets; set as NA currently
+```
 
+```{r}
+# approached by first labeling if is or is not a helix (i and j =! 0), then outing runs
+x <- db_to_df_one_to_one(t2db)
+
+call_helicies <- function(i_j_pair_df) {
+  i_j_pair_df <- i_j_pair_df |>
+    mutate(runj = (c(0,diff(j))),  #need to pad with a zero to keep length
+         runi = (c(0,diff(i)))) |> # run columns show the difference between the value in the row (i N or j N) and that in the previous (i N-1 or j N-1)
+    mutate(in_helix = case_when( 
+      j != 0 & i != 0 ~ 1, # if there are both coordinates, then in helix
+      .default = 0
+    ),
+    helix_num = 0)
+  helix_counter <- 0
+  # now labeling by helix, defined as runs of base pairs where both i and j change by 1 from the previous pair
+  for (idx in 1:nrow(i_j_pair_df)){
+    if (i_j_pair_df$in_helix[idx] == 0){ #if not in helix, don't do anything
+      next 
+    } else if (i_j_pair_df$in_helix[idx] == 1 & i_j_pair_df$in_helix[idx-1] == 0) { # typical helix break where helicies are sep by some unpaired regions
+      helix_counter <- helix_counter + 1
+      i_j_pair_df$helix_num[idx] <- helix_counter
+    } else if (i_j_pair_df$in_helix[idx] == 1 & i_j_pair_df$runj[idx] < -1) { # atypical helix start, when j jumps
+      helix_counter <- helix_counter + 1
+      i_j_pair_df$helix_num[idx] <- helix_counter
+    } else if (i_j_pair_df$in_helix[idx] == 1 & i_j_pair_df$in_helix[idx-1] != 0) {
+      i_j_pair_df$helix_num[idx] <- helix_counter
+    } else {
+      i_j_pair_df$helix_num[idx] <- "error"
+    }
+  }
+}
+
+# call stems by
 ```
 
 ? trim to 260 after mutating ect

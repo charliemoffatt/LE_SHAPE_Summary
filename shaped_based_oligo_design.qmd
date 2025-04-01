@@ -1,7 +1,7 @@
 ---
 title: "shape_based_oligos"
 format: html
-editor: visual
+editor: source
 ---
 
 ```{r}
@@ -13,10 +13,154 @@ library(seqinr)
 library(R4RNA)
 ```
 
+
+Parsing Dot Bracket into a more useful format for me - i,j pairing - i = 1-300 - j = i or 0, if unpaired
+
+. -\> j = 0
+
+sub table: bracket type, index (, 10 (, 11 (, 12 ), 15 ), 16
+
+-\> look at https://stackoverflow.com/questions/29991917/indices-of-matching-parentheses-in-python https://stackoverflow.com/questions/61961836/find-and-label-matching-pairs-of-parentheses \# i, j dictionary -\> 2 contincous runs i and j = 1 ds, then sort into stems \# def stem as completed set of brackets \# all combos of helixes wi a stem --\> calling what a helix is will be complex \# limit n helicies per stem, divide helices by length of interupting runs on each side, like if 1-2 on one side but 5 on other, keep defining as same helix
 Functions needed:
 
-```{r functions}
+```{r used-functions}
 #| echo: false
+# turns a dot-bracket represenation of a structure into a table with with each i and j coordinate only appearing once
+db_to_df_one_to_one <- function(dot_bracket_structure) {
+  db <- dot_bracket_structure |> # takes string of dots and brackets
+    str_split("") |>
+    unlist() # and turns into a vector of characters
+  len <- length(db) # length of sequence represented by dot bracket
+  df <- tibble( # initialize tibble to store each base (i) and what it pairs to (j)
+    i = 1:len,
+    j = NA,
+    value = NA) # temporary, used to track the order of open brackets and if they have been paired to their close bracket yet
+    counter <- 1 # initialize counter, assigned to "value" when an open bracket is encountered
+   #====================== iteration through the dot bracket ==============
+    for (idx in 1:len){ # for each index in a dot bracket representation
+      paired <- db[idx] # value at index
+      if (paired == "."){
+        df$j[idx] <- 0 # set j to 0; ie, not paired with anything
+      } else if (paired == "(") {
+        df$value[idx] <- counter 
+        counter <- counter + 1 # increment counter
+      } else if (paired == ")") {
+        pair_bracket_index <- which.max(df$value) # index of highest value aka most recent opening bracket
+        df$j[idx] <- df$i[pair_bracket_index] # assign index of most recent open bracket to j for this i (index x)
+        df$value[pair_bracket_index] <- 0 # set the value of the base just paired to i to 0 so it can't be assigned to another i
+      } else {
+        print("Error! Unexpected character in dot bracket notation")
+      }
+    }
+    df_out <- df |>
+      select(!value) |># drop value column since it doesn't mean anything biologically
+      drop_na() # drop rows with j = NA, ie open bracket, to represent each bp only once in a df
+    return(df_out)
+}  
+# numbers helices
+call_helicies <- function(i_j_pair_df) {
+  i_j_pair_df <- i_j_pair_df |>
+    mutate(runj = (c(0,diff(j))),  # need to pad with a zero to keep length
+         runi = (c(0,diff(i)))) |> # run columns show the difference between the value in the row (i N or j N) and that in the previous (i N-1 or j N-1)
+    mutate(in_helix = case_when( 
+      j != 0 & i != 0 ~ 1, # if there are both coordinates, then in helix
+      .default = 0
+    ),
+    helix_num = 0)
+  helix_counter <- 0
+  # now labeling by helix, defined as runs of base pairs where both i and j change by 1 from the previous pair
+  for (idx in 1:nrow(i_j_pair_df)){
+    if (i_j_pair_df$in_helix[idx] == 0){ #if not in helix, don't do anything
+      next 
+    } else if (i_j_pair_df$in_helix[idx] == 1 & i_j_pair_df$in_helix[idx-1] == 0) { # typical helix break where helicies are sep by some unpaired regions
+      helix_counter <- helix_counter + 1
+      i_j_pair_df$helix_num[idx] <- helix_counter
+    } else if (i_j_pair_df$in_helix[idx] == 1 & i_j_pair_df$runj[idx] < -1) { # atypical helix start, when j jumps
+      helix_counter <- helix_counter + 1
+      i_j_pair_df$helix_num[idx] <- helix_counter
+    } else if (i_j_pair_df$in_helix[idx] == 1 & i_j_pair_df$in_helix[idx-1] != 0) {
+      i_j_pair_df$helix_num[idx] <- helix_counter
+    } else {
+      i_j_pair_df$helix_num[idx] <- "error"
+    }
+  }
+  return(i_j_pair_df)
+}
+# numbers runs of helices/ stems
+call_stems <- function(helix_df, n = 2) { # n = number of unpaired nt to ignore when itneruppting a step
+  helix_rle <- rle(helix_df$in_helix)
+  
+  helix_rle_df <- tibble(
+    lengths = helix_rle$lengths,
+    values = helix_rle$values,
+    in_run = NA
+  )
+  # decompress rle, but ignore lengths < n if value == 0 and call as part of run
+  ## run calling
+  for (idx in seq_along(helix_rle_df$lengths)) {
+    if (idx == 1) { # for the first row
+      helix_rle_df$in_run[idx] <- helix_rle_df$values[idx] # call in run or not by if in helix or not
+    } else if (helix_rle_df$values[idx]) { # if in a helix
+      helix_rle_df$in_run[idx] <- 1 # set value to 1/ in run
+    } else if (!helix_rle_df$values[idx]) { # if this row is not a helix
+      if (helix_rle_df$lengths[idx] > n) { # if more than n nt to ignore interrupting a run of helicies
+        helix_rle_df$in_run[idx] <- 0 # break in run
+      } else {
+        helix_rle_df$in_run[idx] <- 1 # if lengths <= n, keep run going
+      }
+    } else {
+       print("error!")
+      }
+  }
+  ## run numbering  
+  helix_rle_df <- helix_rle_df |>
+      mutate(run_number = 0)
+  run_idx <- 0
+  previous_state <- 0 # if the previous row was in or out of a run
+  for (idx in seq_along(helix_rle_df$lengths)) {
+    if (helix_rle_df$in_run[idx] & !previous_state) { # if  starting a run
+      run_idx <- run_idx + 1 # incriment counter
+      helix_rle_df$run_number[idx] <- run_idx # save value in column
+      previous_state <- helix_rle_df$in_run[idx] # save last state of in/out of a run to reference next loop
+    } else if (helix_rle_df$in_run[idx] & previous_state){ # if continuing a run
+      helix_rle_df$run_number[idx] <- run_idx
+      previous_state <- helix_rle_df$in_run[idx]
+    } else
+      previous_state <- helix_rle_df$in_run[idx]
+  }
+  ## decompress rle, add in_run and run_num to y/ called helicies
+  # https://devtut.github.io/r/run-length-encoding.html#identifying-and-grouping-by-runs-in-base-r
+  in_runs_decomp <- rep(helix_rle_df$in_run, helix_rle_df$lengths)
+  run_num_decomp <- rep(helix_rle_df$run_number, helix_rle_df$lengths)
+  # bring everything together
+  helix_df <- helix_df |>
+    mutate(in_stem = in_runs_decomp,
+           stem_num = run_num_decomp)
+  return(helix_df)
+}
+# generates a complementary base
+get_complement <- function(base) {
+  comp_base <- switch(EXPR = base, # https://www.geeksforgeeks.org/switch-case-in-r/ example 2
+           "A" = "U",
+           "U" = "A",
+           "C" = "G",
+           "G" = "C")
+  return(comp_base)
+}
+# mutates a single base
+mutate_base <- function(base) {
+   mutant_bases <- switch(EXPR = base, # https://www.geeksforgeeks.org/switch-case-in-r/ example 2
+           "A" = c("U", "C", "G"),
+           "U" = c("A", "C", "G"),
+           "C" = c("U", "A", "G"),
+           "G" = c("U", "A", "C"))
+   mutant <- sample(mutant_bases, 1)
+  return(mutant)
+}
+```
+
+```{r, eval=FALSE, reference-functions}
+### reference function!
 #| ## from scramble-LE-MPRA.Rmd
 # mutates a DNA string such that none of the bases have their original identity
 mutate_dna <- function(string) {
@@ -35,9 +179,6 @@ mutate_dna <- function(string) {
   output <- paste(new_seq, collapse = "")
   return(output)
 }
-
-
-
 # makes mutations based on predicted structures
 mutate_structure <- function(LEsequence, viennaDotBracket, LEname, n_times = 3) { ##! add n_times for loop outside everything else
   # initialize lists to store seqs and names
@@ -141,6 +282,37 @@ mutate_structure <- function(LEsequence, viennaDotBracket, LEname, n_times = 3) 
     as.data.frame(.)
   return(output)
 }
+single_stem_mutants <- function(stem_df, le_seq, le_name, n_rep = 3) {
+  oligo_list <- c() # initialize lists to to store info
+  names_list <- c()
+  # get number of stems
+  n_stem <- stem_df |>
+    filter(in_stem == 1) |>
+    pull(stem_num) |>
+    max()
+  # get i and j for each stem
+  for (stem in 1:n_stem) { # for each stem
+    i_idx <- stem_df |> # all i indicies in a stem
+      filter(stem_num == stem, i !=0) |>
+      pull(i)
+    j_idx <- stem_df |> # all j indicies in a stem
+      filter(stem_num == stem, j !=0) |>
+      pull(j)
+    ## making mutants
+    rep_count <- 0
+    while (rep_count < n_rep) {
+      rep_count <- rep_count + 1
+      wo <- le_seq
+      oligo_list <- c(oligo_list, mutate_bases_by_idx(working_oligo = wo, idx_list = i_idx))
+      names_list <- c(names_list, paste0(le_name,"_stem", as.character(stem), "i_rep", as.character(rep_count)))
+    }
+  }
+  output <- tibble(
+    names = names_list,
+    oligos = oligo_list
+  )
+  return(output)
+}
 ```
 
 ```{r}
@@ -155,15 +327,8 @@ t2df <- t2db |>
   viennaToHelix() # i have no idea how helix represents dot bracket, lots of missing base pairs :/
 ```
 
-Parsing Dot Bracket into a more useful format for me - i,j pairing - i = 1-300 - j = i or 0, if unpaired
 
-. -\> j = 0
-
-sub table: bracket type, index (, 10 (, 11 (, 12 ), 15 ), 16
-
--\> look at https://stackoverflow.com/questions/29991917/indices-of-matching-parentheses-in-python https://stackoverflow.com/questions/61961836/find-and-label-matching-pairs-of-parentheses \# i, j dictionary -\> 2 contincous runs i and j = 1 ds, then sort into stems \# def stem as completed set of brackets \# all combos of helixes wi a stem --\> calling what a helix is will be complex \# limit n helicies per stem, divide helices by length of interupting runs on each side, like if 1-2 on one side but 5 on other, keep defining as same helix
-
-```{r}
+```{r, echo=FALSE, eval=FALSE}
 db_to_df <- function(dot_bracket_structure) {
   db <- dot_bracket_structure |> # takes string of dots and brackets
     str_split("") |>
@@ -207,41 +372,6 @@ db_to_df <- function(dot_bracket_structure) {
     return(df_out)
 }
 
-db_to_df_one_to_one <- function(dot_bracket_structure) {
-  db <- dot_bracket_structure |> # takes string of dots and brackets
-    str_split("") |>
-    unlist() # and turns into a vector of characters
-  
-  len <- length(db) # length of sequence represented by dot bracket
-  
-  df <- tibble( # initialize tibble to store each base (i) and what it pairs to (j)
-    i = 1:len,
-    j = NA,
-    value = NA) # temporary, used to track the order of open brackets and if they have been paired to their close bracket yet
-    
-    counter <- 1 # initialize counter, assigned to "value" when an open bracket is encountered
-   #====================== iteration through the dot bracket ==============
-     
-    for (idx in 1:len){ # for each index in a dot bracket representation
-      paired <- db[idx] # value at index
-      if (paired == "."){
-        df$j[idx] <- 0 # set j to 0; ie, not paired with anything
-      } else if (paired == "(") {
-        df$value[idx] <- counter 
-        counter <- counter + 1 # increment counter
-      } else if (paired == ")") {
-        pair_bracket_index <- which.max(df$value) # index of highest value aka most recent opening bracket
-        df$j[idx] <- df$i[pair_bracket_index] # assign index of most recent open bracket to j for this i (index x)
-        df$value[pair_bracket_index] <- 0 # set the value of the base just paired to i to 0 so it can't be assigned to another i
-      } else {
-        print("Error! Unexpected character in dot bracket notation")
-      }
-    }
-    df_out <- df |>
-      select(!value) |># drop value column since it doesn't mean anything biologically
-      drop_na() # drop rows with j = NA, ie open bracket, to represent each bp only once in a df
-    return(df_out)
-}    
 ```
 
 ```{r}
@@ -276,36 +406,175 @@ for (idx in 1:nrow(xt)){
 ```{r}
 # approached by first labeling if is or is not a helix (i and j =! 0), then outing runs
 x <- db_to_df_one_to_one(t2db)
+y <- call_helicies(x)
+# call stems by if i or j is continous, ignore bulges N or smaller (?)
+n <- 2 # number of nt to ignore
+  # 1. call runs of in helix vs not, with tolerance of skipping N nt
+  #using RLE ->
+helix_run_rle <- rle(y$in_helix)
 
-call_helicies <- function(i_j_pair_df) {
-  i_j_pair_df <- i_j_pair_df |>
-    mutate(runj = (c(0,diff(j))),  #need to pad with a zero to keep length
-         runi = (c(0,diff(i)))) |> # run columns show the difference between the value in the row (i N or j N) and that in the previous (i N-1 or j N-1)
-    mutate(in_helix = case_when( 
-      j != 0 & i != 0 ~ 1, # if there are both coordinates, then in helix
-      .default = 0
-    ),
-    helix_num = 0)
-  helix_counter <- 0
-  # now labeling by helix, defined as runs of base pairs where both i and j change by 1 from the previous pair
-  for (idx in 1:nrow(i_j_pair_df)){
-    if (i_j_pair_df$in_helix[idx] == 0){ #if not in helix, don't do anything
-      next 
-    } else if (i_j_pair_df$in_helix[idx] == 1 & i_j_pair_df$in_helix[idx-1] == 0) { # typical helix break where helicies are sep by some unpaired regions
-      helix_counter <- helix_counter + 1
-      i_j_pair_df$helix_num[idx] <- helix_counter
-    } else if (i_j_pair_df$in_helix[idx] == 1 & i_j_pair_df$runj[idx] < -1) { # atypical helix start, when j jumps
-      helix_counter <- helix_counter + 1
-      i_j_pair_df$helix_num[idx] <- helix_counter
-    } else if (i_j_pair_df$in_helix[idx] == 1 & i_j_pair_df$in_helix[idx-1] != 0) {
-      i_j_pair_df$helix_num[idx] <- helix_counter
+helix_run_rle_df <- tibble(
+  lengths = helix_run_rle$lengths,
+  values = helix_run_rle$values,
+  in_run = NA
+)
+# decompress rle, but ignore lengths < n if value == 0 and call as part of run
+## run calling
+for (idx in seq_along(helix_run_rle_df$lengths)) {
+  if (idx == 1) { # for the first row
+    helix_run_rle_df$in_run[idx] <- helix_run_rle_df$values[idx] # call in run or not by if in helix or not
+  } else if (helix_run_rle_df$values[idx]) { # if in a helix
+    helix_run_rle_df$in_run[idx] <- 1 # set value to 1/ in run
+  } else if (!helix_run_rle_df$values[idx]) { # if this row is not a helix
+    if (helix_run_rle_df$lengths[idx] > n) { # if more than n nt to ignore interrupting a run of helicies
+      helix_run_rle_df$in_run[idx] <- 0 # break in run
     } else {
-      i_j_pair_df$helix_num[idx] <- "error"
+      helix_run_rle_df$in_run[idx] <- 1 # if lengths <= n, keep run going
     }
-  }
+  } else {
+     print("error!")
+    }
 }
+## run numbering  
+helix_run_rle_df <- helix_run_rle_df |>
+  mutate(run_number = 0)
+run_idx <- 0
+prevous_state <- 0
+for (idx in seq_along(helix_run_rle_df$lengths)) {
+  if (helix_run_rle_df$in_run[idx] & !prevous_state) { # if  starting a run
+    run_idx <- run_idx + 1 # incriment counter
+    helix_run_rle_df$run_number[idx] <- run_idx # save value in column
+    prevous_state <- helix_run_rle_df$in_run[idx] # save last state of in/out of a run to reference next loop
+  } else if (helix_run_rle_df$in_run[idx] & prevous_state){ # if continuing a run
+    helix_run_rle_df$run_number[idx] <- run_idx
+    prevous_state <- helix_run_rle_df$in_run[idx]
+  } else
+    prevous_state <- helix_run_rle_df$in_run[idx]
+}
+## decompress rle, add in_run and run_num to y/ called helicies
+# https://devtut.github.io/r/run-length-encoding.html#identifying-and-grouping-by-runs-in-base-r
+in_runs_decomp <- rep(helix_run_rle_df$in_run, helix_run_rle_df$lengths)
+run_num_decomp <- rep(helix_run_rle_df$run_number, helix_run_rle_df$lengths)
+# bring everything together
+y <- y |>
+  mutate(in_run = in_runs_decomp,
+         run_num = run_num_decomp)
 
-# call stems by
+
+z <- call_stems(y, n = 4)
 ```
 
-? trim to 260 after mutating ect
+next: actually making mutations
+for each stem:
+collect all i j pairs, exclude an where j = 0, from a stem N
+mutate all i, then all j, then compensate (mutate i, then generate matching j sequence)
+```{r}
+# starting from z df and t2seq
+# if i or j are in primer regions, just mutate once --> if i/j %in% primer; continue
+z_stems <- z |>
+  filter(in_stem == 1)
+validseq <- 21:280
+le_name <- "test"
+n_stem <- 1
+oligo_list <- c()
+names_list <- c()
+
+#lists of indices to mutate
+i_1 <- z_stems |> # all i indicies for stem 1
+  filter(stem_num == n_stem, i != 0) |>
+  pull(i)
+# https://stackoverflow.com/questions/36596928/replace-character-at-certain-location-within-string to edit oligo
+working_oligo <- t2sq
+for (idx in i_1) {
+  substring(x = working_oligo, first = idx, last = idx) <- mutate_base(substr(x = t2sq, start = idx, stop = idx))
+}
+## returns working oligo, where mutations have been made
+
+## naming
+#lename_stemN_i_repN; lename_stemN_j_repN; lename_stemN_ij_repN
+```
+
+```{r making-mutations}
+mutate_bases_by_idx <- function(idx_list, working_oligo, valid_seq = 21:280) {
+      for (idx in idx_list) { # for each index in a list
+        if (idx %in% valid_seq) { # if index is not in primer regions
+          substring(x = working_oligo, first = idx, last = idx) <- mutate_base(substr(x = t2sq, start = idx, stop = idx)) # mutate it
+          }
+      }
+  return(working_oligo) # return mutated oligo
+}
+wo <- t2sq
+a <- mutate_bases_by_idx(idx_list = i_1, working_oligo = wo)
+
+a <- single_stem_mutants(stem_df = z, le_seq = t2sq, le_name = "test", n_rep = 3)
+```
+
+```{r combinaitons}
+oligo_list <- c() # initialize lists to to store info
+names_list <- c()
+# get number of stems
+stem_df <- z
+n_stem <- stem_df |>
+  filter(in_stem == 1) |>
+  pull(stem_num) |>
+  max()
+combos <- c()
+for(n in 1:n_stem){
+  temp_comb <- combn(x = 1:n_stem, m = n, simplify = FALSE)
+  combos <- c(combos, temp_comb)
+}
+combos <- combos |>
+    unname()
+for (c in combos) { # for each combination of stems
+    stems <- c |> unlist()
+    i_idx <- stem_df |> # all i indicies in a 
+      filter(stem_num %in% stems, i !=0) |>
+      pull(i)
+    j_idx <- stem_df |> # all j indicies in a 
+      filter(stem_num %in% stems, j !=0) |>
+      pull(j)
+}
+
+combo_stem_mutants <- function(stem_df, le_seq, le_name, n_rep = 3) {
+  oligo_list <- c() # initialize lists to to store info
+  names_list <- c()
+  # get number of stems
+  n_stem <- stem_df |>
+    filter(in_stem == 1) |>
+    pull(stem_num) |>
+    max()
+  combos <- c()
+  for(n in 1:n_stem){
+  temp_comb <- combn(x = 1:n_stem, m = n, simplify = FALSE) # all combos for this m
+  combos <- c(combos, temp_comb)
+  }
+  combos <- combos |>
+    unname()
+  # get i and j for each combo
+  #######
+  for (c in combos) { # for each combination of stems
+    stems <- c |> unlist()
+    i_idx <- stem_df |> # all i indicies in a 
+      filter(stem_num %in% stems, i !=0) |>
+      pull(i)
+    j_idx <- stem_df |> # all j indicies in a 
+      filter(stem_num %in% stems, j !=0) |>
+      pull(j)
+    ## making mutants
+    rep_count <- 0
+    while (rep_count < n_rep) {
+      rep_count <- rep_count + 1
+      oligo_list <- c(oligo_list, mutate_bases_by_idx(working_oligo = le_seq, idx_list = i_idx)) # mutating i
+      names_list <- c(names_list, paste0(le_name,"_stem", paste(c,collapse = "-"), "i_rep", as.character(rep_count)))
+      oligo_list <- c(oligo_list, mutate_bases_by_idx(working_oligo = le_seq, idx_list = j_idx)) # mutating j
+      names_list <- c(names_list, paste0(le_name,"_stem", paste(c,collapse = "-"), "j_rep", as.character(rep_count)))
+    }
+  }
+  output <- tibble(
+    names = names_list,
+    oligos = oligo_list
+  )
+  return(output)
+}
+combo_test <- combo_stem_mutants(stem_df = z, le_seq = t2sq, le_name = "test", n_rep = 3)
+```

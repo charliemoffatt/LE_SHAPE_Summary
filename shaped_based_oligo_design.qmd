@@ -158,10 +158,10 @@ mutate_base <- function(base) {
   return(mutant)
 }
 
-mutate_bases_by_idx <- function(idx_list, working_oligo, valid_seq = 21:280) {
+mutate_bases_by_idx <- function(idx_list, working_oligo, le_seq, valid_seq = 21:280) {
       for (idx in idx_list) { # for each index in a list
         if (idx %in% valid_seq) { # if index is not in primer regions
-          substring(x = working_oligo, first = idx, last = idx) <- mutate_base(substr(x = t2sq, start = idx, stop = idx)) # mutate it
+          substring(x = working_oligo, first = idx, last = idx) <- mutate_base(substr(x = le_seq, start = idx, stop = idx)) # mutate it
           }
       }
   return(working_oligo) # return mutated oligo
@@ -313,7 +313,7 @@ single_stem_mutants <- function(stem_df, le_seq, le_name, n_rep = 3) {
     while (rep_count < n_rep) {
       rep_count <- rep_count + 1
       wo <- le_seq
-      oligo_list <- c(oligo_list, mutate_bases_by_idx(working_oligo = wo, idx_list = i_idx))
+      oligo_list <- c(oligo_list, mutate_bases_by_idx(working_oligo = wo, le_seq = le_seq, idx_list = i_idx))
       names_list <- c(names_list, paste0(le_name,"_stem", as.character(stem), "i_rep", as.character(rep_count)))
     }
   }
@@ -506,7 +506,7 @@ for (idx in i_1) {
 
 ```{r making-mutations}
 wo <- t2sq
-a <- mutate_bases_by_idx(idx_list = i_1, working_oligo = wo)
+a <- mutate_bases_by_idx(idx_list = i_1, working_oligo = wo, le_seq = wo)
 
 ```
 
@@ -535,7 +535,18 @@ for (c in combos) { # for each combination of stems
       filter(stem_num %in% stems, j !=0) |>
       pull(j)
 }
+stems <- c(1,3)## compensatory testing
+ij_df <- stem_df |> ## for compensatory, would go into for c in combos loop
+    filter(stem_num %in% stems) |>
+    select(i,j)
+curr_oligo <- t2sq
+for (idx in 1:nrow(ij_df)){
+  if (idx %in% valid_seq) { # if index is not in primer regions
+    mutant <-  mutate_base(substr(x = t2sq, start = idx, stop = idx))
+          substring(x = curr_oligo, first = idx, last = idx) <- mutate_base(substr(x = t2sq, start = idx, stop = idx)) # mutate it
+          }  }
 
+###########
 combo_stem_mutants <- function(stem_df, le_seq, le_name, n_rep = 3) {
   oligo_list <- c() # initialize lists to to store info
   names_list <- c()
@@ -565,9 +576,9 @@ combo_stem_mutants <- function(stem_df, le_seq, le_name, n_rep = 3) {
     rep_count <- 0
     while (rep_count < n_rep) {
       rep_count <- rep_count + 1
-      oligo_list <- c(oligo_list, mutate_bases_by_idx(working_oligo = le_seq, idx_list = i_idx)) # mutating i
-      names_list <- c(names_list, paste0(le_name,"_stem", paste(c,collapse = "-"), "i_rep", as.character(rep_count)))
-      oligo_list <- c(oligo_list, mutate_bases_by_idx(working_oligo = le_seq, idx_list = j_idx)) # mutating j
+      oligo_list <- c(oligo_list, mutate_bases_by_idx(working_oligo = le_seq, le_seq = le_seq, idx_list = i_idx)) # mutating i
+      names_list <- c(names_list, paste0(le_name,"_stem", paste(c,collapse = "-"), "i_rep", as.character(rep_count))) # helicies mutated separated by dashes
+      oligo_list <- c(oligo_list, mutate_bases_by_idx(working_oligo = le_seq, le_seq = le_seq, idx_list = j_idx)) # mutating j
       names_list <- c(names_list, paste0(le_name,"_stem", paste(c,collapse = "-"), "j_rep", as.character(rep_count)))
     }
   }
@@ -578,4 +589,23 @@ combo_stem_mutants <- function(stem_df, le_seq, le_name, n_rep = 3) {
   return(output)
 }
 combo_test <- combo_stem_mutants(stem_df = z, le_seq = t2sq, le_name = "test", n_rep = 3)
+
+## compendastory mutations 
+compensatory_mutate <- function(stem_df, working_oligo, valid_seq = 21:280, stem_idxes) {
+  ij_df <- stem_df |>
+    filter(stem_num %in% stem_idexs) |>
+    select(i,j)
+  for (idx in ij_df){
+    
+  }
+  
+ #########   
+  for (idx in idx_list) { # for each index in a list
+      if (idx %in% valid_seq) { # if index is not in primer regions
+        substring(x = working_oligo, first = idx, last = idx) <- mutate_base(substr(x = t2sq, start = idx, stop = idx)) # mutate it
+        }
+    }
+  return(working_oligo) # return mutated oligo
+}
+
 ```

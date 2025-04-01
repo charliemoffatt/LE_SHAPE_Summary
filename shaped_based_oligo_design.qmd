@@ -535,15 +535,18 @@ for (c in combos) { # for each combination of stems
       filter(stem_num %in% stems, j !=0) |>
       pull(j)
 }
+valid_seq <- 21:280
 stems <- c(1,3)## compensatory testing
 ij_df <- stem_df |> ## for compensatory, would go into for c in combos loop
     filter(stem_num %in% stems) |>
     select(i,j)
 curr_oligo <- t2sq
 for (idx in 1:nrow(ij_df)){
-  if (idx %in% valid_seq) { # if index is not in primer regions
-    mutant <-  mutate_base(substr(x = t2sq, start = idx, stop = idx))
-          substring(x = curr_oligo, first = idx, last = idx) <- mutate_base(substr(x = t2sq, start = idx, stop = idx)) # mutate it
+  if (ij_df$i[idx] %in% valid_seq & ij_df$j[idx] %in% valid_seq) { # if index is not in primer regions
+    mutant <-  mutate_base(substr(x = t2sq, start = ij_df$i[idx], stop = ij_df$i[idx]))
+    substring(x = curr_oligo, first = ij_df$i[idx], last = ij_df$i[idx]) <- mutant # mutate it add mutant to i index of oligo being built
+    substring(x = curr_oligo, first = ij_df$j[idx], last = ij_df$j[idx]) <- get_complement(mutant) # put complement of i base in j position
+    
           }  }
 
 ###########

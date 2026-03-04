@@ -1,0 +1,106 @@
+---
+title: "SHAPE MPRA Fractionation Analysis"
+format: html
+---
+
+
+```{r libraries}
+library(tidyverse)
+library(Biostrings)
+library(readr)
+library(seqinr)
+library(DESeq2)
+library(ggplot2)
+library(pheatmap)
+```
+
+read in data
+```{r data}
+samplenames <- c("GFP_S1", "GFP_S2", "GFP_S3", "GFP_S4", "GFP_N1", "GFP_N2", "GFP_N3", "GFP_N4", "FF_S1", "FF_S2", "FF_S3", "FF_S4", "FF_N1", "FF_N2", "FF_N3", "FF_N4")
+suffix <- c("S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11", "S12", "S13", "S14", "S15", "S16")
+col_names <- c('oligo_id', 'total_reads')
+for(i in 1:length(samplenames)){ 
+  assign(x = paste0(samplenames[i], "umis"), #variable name
+         value = read_tsv(paste0("~/Desktop/lab/LE_SHAPE_Summary/fract_umis/", samplenames[i], "_", suffix[i], ".umis.txt"), #file path
+         col_names = c(col_names, samplenames[i]), 
+         col_select = c('oligo_id', samplenames[i]),
+         show_col_types = FALSE)) #name columns and select
+}
+```
+
+```{r deseq-GFP}
+# from MPRA_GFP_analysis; based on:
+# https://www.bioconductor.org/packages/devel/bioc/vignettes/DESeq2/inst/doc/DESeq2.html#count-matrix-input
+gfpcts <- list(GFP_S1umis, GFP_S2umis, GFP_S3umis, GFP_S4umis, GFP_N1umis, GFP_N2umis, GFP_N3umis, GFP_N4umis) %>%
+  purrr::reduce(full_join, by = 'oligo_id') %>%
+  column_to_rownames('oligo_id')
+gfpcts[is.na(gfpcts)] <- 0
+# make col data table
+condition <- c( rep('soma',4), rep('neurite', 4))
+type <- rep('paired-end', 8)
+rep <- factor(rep(c(1,2,3,4),2))
+gfpsamples <- c('GFP_S1', 'GFP_S2', 'GFP_S3', 'GFP_S4', 'GFP_N1', 'GFP_N2', 'GFP_N3', 'GFP_N4')
+gfpcoldat <- data.frame(condition, type, rep, row.names = gfpsamples)
+write.csv(gfpcts, "~/Desktop/lab/LE_SHAPE_Summary/results/gfp_cts.csv")
+gfpcts <- read.csv("~/Desktop/lab/LE_SHAPE_Summary/results/gfp_cts.csv") |>
+  column_to_rownames(var = "X")
+# make DESeq object
+gfpdso <- DESeqDataSetFromMatrix(countData = gfpcts, colData = gfpcoldat, design = ~rep+condition)
+gfpdds <- DESeq(gfpdso)
+gfpdds <- gfpdds[rowMins(counts(gfpdds)) > 10, ]
+gfp_norm_counts <- counts(gfpdds, normalized = TRUE)
+gfp_raw_counts <- counts(gfpdds, normalized = FALSE)
+write.csv(gfp_norm_counts, "~/Desktop/lab/LE_SHAPE_Summary/results/gfp_counts_by_rep.csv")
+```
+
+```{r check-clustering}
+gfp_pairwise <- cor(gfp_norm_counts, method = 'spearman')
+pheatmap(gfp_pairwise)
+```
+
+```{r calc-fc}
+gfp_norm_counts <- read_csv("~/Desktop/lab/LE_SHAPE_Summary/results/gfp_counts_by_rep.csv") |>
+  rename(...1 = "oligo")
+
+gfp_soma_vs_neurite <- results(gfpdds, contrast = c('condition', 'neurite', 'soma'))
+
+gfp_fc <- drop_na(data.frame(gfp_soma_vs_neurite)) |>
+  rownames_to_column(var = "oligo") |>
+  select(oligo, log2FoldChange, padj, baseMean) |>
+  mutate(which_mpra = case_when(
+    grepl('_', oligo) ~ 'exp',
+    grepl('|', oligo) ~ 'ctrl'
+  ))
+
+ggplot(data = gfp_fc, aes(x = log2FoldChange, y = -log10(padj), color = which_mpra)) +
+  geom_point(shape = 1) +
+  scale_color_manual(values = c("#BBBBBB", "#009988")) +
+  theme_classic()
+```
+
+```{r normalization-to-wt}
+gfp_fc_wts <- gfp_fc |>
+  filter(str_detect(oligo, "wt")) |>
+  separate_wider_delim(oligo, delim = "_", names = c("gene", "wt", "rep")) |>
+  group_by(gene) |>
+  summarise(mean_fc = mean(log2FoldChange))
+
+gfp_fc_norm <- gfp_fc |>
+  filter(which_mpra == "exp") |>
+  separate_wider_delim(oligo, delim = "_", names = c("gene", "other"), too_many = "merge", cols_remove = F) |>
+  select(-other) |>
+  mutate(norm_fc = case_when(
+    gene == "trak2" ~ log2FoldChange - 0.999,
+    gene == "net1" ~ log2FoldChange - 2.93,
+    gene == "trp53" ~ log2FoldChange - 0.624
+  ))
+#write_csv(gfp_fc_norm, file = "~/Desktop/lab/LE_SHAPE_Summary/results/gfp_fc_norm.csv")
+```
+
+
+```{r analysis-start}
+gfp_fc_norm <- read_csv("~/Desktop/lab/LE_SHAPE_Summary/results/gfp_fc_norm.csv")
+
+```
+
+
